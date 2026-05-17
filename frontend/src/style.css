@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  font-feature-settings: 'cv11', 'ss01';
+  background: #F7F8FB;
+}
+
+/* Custom utility classes */
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-cta-grad px-6 py-3 text-sm font-semibold text-white shadow-soft transition hover:shadow-hover hover:-translate-y-0.5 active:translate-y-0;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-medium text-ink ring-1 ring-slate-200 transition hover:ring-brand-400 hover:text-brand-600;
+  }
+
+  .btn-vip {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-vip-grad px-6 py-3 text-sm font-semibold text-white shadow-vip transition hover:-translate-y-0.5;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:ring-brand-400 hover:text-brand-600 cursor-pointer;
+  }
+
+  .card {
+    @apply rounded-2xl bg-white shadow-soft ring-1 ring-slate-100;
+  }
+
+  .text-grad {
+    @apply bg-text-grad bg-clip-text text-transparent;
+  }
+}
+
+/* Hide spinner on number inputs */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Subtle dot grid for the hero background */
+.dot-grid {
+  background-image: radial-gradient(rgba(47, 115, 255, 0.08) 1px, transparent 1px);
+  background-size: 22px 22px;
+}

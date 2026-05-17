@@ -1,0 +1,8 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+yt-dlp>=2025.1.15
+pydantic>=2.0.0
+# Optional: ships a prebuilt static ffmpeg binary so users don't need
+# `brew install ffmpeg`. yt-dlp picks it up automatically via the
+# ffmpeg_location option we wire in ffmpeg_check.py.
+imageio-ffmpeg>=0.5.1

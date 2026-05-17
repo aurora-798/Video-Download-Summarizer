@@ -1,0 +1,14 @@
+# 禁止读取的目录，避免污染上下文
+node_modules/
+dist/
+build/
+logs/
+tmp/
+.idea/
+.vscode/
+.next/
+.vercel/
+.env
+.env.*
+*.log
+*.tmp
