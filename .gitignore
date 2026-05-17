@@ -17,6 +17,10 @@ frontend/dist/
 frontend/.vite/
 frontend/*.log
 
+# --- AI summary keys & whisper cache ---
+backend/.env
+backend/.cache/
+
 # --- OS / Editor ---
 .DS_Store
 Thumbs.db

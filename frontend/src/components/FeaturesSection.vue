@@ -40,14 +40,14 @@ const features = [
 </script>
 
 <template>
-  <section id="features" class="relative py-20 md:py-28 bg-white">
+  <section id="features" class="relative py-20 md:py-28 bg-[#FAF7F2]">
     <div class="max-w-6xl mx-auto px-4 md:px-8">
       <div class="text-center max-w-2xl mx-auto">
-        <span class="inline-block text-xs font-semibold tracking-widest text-brand-600 uppercase">Features</span>
-        <h2 class="mt-3 text-3xl md:text-4xl font-extrabold">
-          为什么选择 <span class="text-grad">VidGrabPro</span>
+        <span class="inline-block text-xs font-medium tracking-[0.2em] text-brand-500 uppercase">Features</span>
+        <h2 class="mt-3 text-3xl md:text-4xl font-serif font-semibold text-ink">
+          为何选择 <span class="text-grad">VidGrabPro</span>
         </h2>
-        <p class="mt-4 text-slate-500 text-base">
+        <p class="mt-4 text-muted text-base font-light leading-relaxed">
           全网视频"一粘即下"的最简单方式，没有套路、没有水印、没有 App。
         </p>
       </div>

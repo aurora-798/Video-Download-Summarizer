@@ -18,6 +18,22 @@
                                          │  douyin  bilibili    yt-dlp API     │
                                          │  直链mp4  WBI+DASH   (+ ffmpeg)     │
                                          └──────────────────────────────────┘
+
+┌─────────────┐  POST /api/summarize     ┌──────────────────────────────────┐
+│  Vue3 前端   │ ───────────────────────► │      summarizer.start_summary    │
+│   AI 总结    │   GET  /summarize/      │      (后台 thread + 事件队列)      │
+│   卡片(SSE) │ ◄── /{id}/stream (SSE) ─│        │ subtitle.py            │
+└─────────────┘                          │        │   ├ YouTube vtt/srv3   │
+                                         │        │   ├ B 站 / 抖音 跳过    │
+                                         │        ▼                        │
+                                         │   transcriber.py               │
+                                         │   ├ local: faster-whisper      │
+                                         │   └ api  : OpenAI 兼容 Whisper │
+                                         │        │                       │
+                                         │        ▼                       │
+                                         │   llm_client.py (DeepSeek 等)  │
+                                         │   stream Chat → markdown delta │
+                                         └──────────────────────────────────┘
 ```
 
 **设计原则**
@@ -27,6 +43,7 @@
 | 用户零配置 | 不要求安装 ffmpeg、不要求导出 cookies；`pip install -r requirements.txt` 即可 |
 | 平台分流 | 抖音 / B 站走自研直采；其余平台继续用 yt-dlp，跟随上游升级 |
 | 无状态 MVP | Job 存内存，文件下完即删，不接 DB / Redis |
+| AI 总结薄包装 | 复用已有解析 + 平台直采；新增四个 ~150 行模块，0 改动核心下载链路 |
 
 ---
 
@@ -232,8 +249,76 @@ cd frontend && npm install && npm run dev
 
 ---
 
-## 8. 相关文档
+## 8. AI 总结流水线（新）
+
+### 8.1 路径与模块
+
+```
+URL ──► subtitle.fetch_subtitle()
+         │
+         ├─ YouTube/通用：yt-dlp writesubtitles + writeautomaticsub
+         │                  → vtt/srv3/json3 → [{start,end,text}]
+         ├─ B 站 / 抖音 / 小红书：直接 return None（游客拿不到 or 无字幕轨）
+         │
+         ▼ 拿不到字幕 → transcriber.transcribe()
+         ├─ local: faster-whisper（默认 base ~70MB，可调 small/medium）
+         │          VAD 优先；若 0 段则自动关闭 VAD 重试（B 站 MV/音乐类）
+         └─ api  : POST {WHISPER_BASE_URL}/audio/transcriptions
+                    （SiliconFlow / Groq / OpenAI 任选）
+         ▼
+         llm_client.stream_chat()  → DeepSeek（默认） / Moonshot / Qwen / OpenAI
+         ▼
+         结构化 Markdown：摘要 / 亮点 / 思考 Q&A / 术语 / 时间线 [mm:ss] / mermaid mindmap
+         ▼
+         summarizer.emit() ─► SummaryJob.events queue ─► /api/summarize/{id}/stream (SSE)
+```
+
+### 8.2 平台覆盖与穿透原理
+
+| 平台 | 字幕路径 | 兜底路径 | 备注 |
+|---|---|---|---|
+| YouTube | yt-dlp 抓 manual + auto captions（含 zh-Hans 自动翻译） | — | 无需 API key 走字幕路径，省时间和 token |
+| TED / 大量国外平台 | 同上 | ASR | 取决于 yt-dlp 字幕能力 |
+| B 站 | 实测：`x/player/v2`、`x/player/wbi/v2`、`conclusion/get` 全部要登录态 → 跳过 | **走 ASR** | 已穷尽公开接口；社区开源方案同样依赖 cookies |
+| 抖音 | `_ROUTER_DATA` 无字幕字段（视频数据本身没有） | **走 ASR** | bibigpt 也是此路径 |
+
+### 8.3 为什么不引入第三方"视频总结开源项目"
+
+| 候选 | 弃用原因 |
+|---|---|
+| bibigpt | 闭源 SaaS |
+| `PodSum` / `whishper` 等 | 体量大、引入 Node/Redis、覆盖与稳定性弱于本方案 |
+| 浏览器插件式（bilibili-subtitle 等） | 全部需用户登录 cookies，违反"零配置" |
+
+最终选择"自己用几个薄文件串起 yt-dlp + faster-whisper + DeepSeek"——这就是 bibigpt 的内部本质，社区已被验证。
+
+### 8.4 SSE 事件协议
+
+| 事件 | 数据 | 用途 |
+|---|---|---|
+| `snapshot` | 当前快照（含已收到的 markdown / stage） | 客户端中途接入时一次性恢复 |
+| `stage`    | `{stage, message, percent}` | 进度条 + 步骤指示 |
+| `meta`     | `{meta: {title, thumbnail, ...}}` | 卡片头部 |
+| `source`   | `{source: "subtitle"|"asr", language}` | 标注文本来源 |
+| `transcript` | `{transcript: [{start, end, text}]}` | 折叠展示原文 |
+| `delta`    | `{chunk}` | LLM token 流，前端 append 渲染 |
+| `done`     | `{summary_md}` | 最终 markdown |
+| `error`    | `{error}` | 友好错误信息 |
+| `close`    | `{reason}` | 通知关闭 |
+
+每 30 秒服务端发一次 `: keep-alive\n\n` 心跳，避免 Nginx/代理超时断开。
+
+### 8.5 任务管理
+
+- `summary_jobs.SummaryJobManager`：内存字典 + 进程锁，软上限 64 条 LRU 淘汰
+- 每个 `SummaryJob` 持有：状态、累计 markdown、`queue.Queue` 事件队列
+- 工作线程 push 事件 + 直接 mutate `summary_md`/`stage` —— SSE 断开后 polling 端点仍能拿到完整状态
+
+---
+
+## 9. 相关文档
 
 - [`README.md`](../README.md) — 快速上手
+- [`AI_SUMMARY.md`](AI_SUMMARY.md) — **AI 总结专册**：配置、平台矩阵、SSE、验收与排障
 - [`DELIVERY.md`](DELIVERY.md) — 功能清单与验收步骤
 - [`CHANGELOG.md`](CHANGELOG.md) — 版本与补丁记录

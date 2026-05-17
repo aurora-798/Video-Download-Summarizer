@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "axios": "^1.7.7",
+    "marked": "^18.0.3",
+    "mermaid": "^11.15.0",
     "vue": "^3.5.12"
   },
   "devDependencies": {

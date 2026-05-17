@@ -5,7 +5,7 @@ import { startDownload } from '../api'
 const props = defineProps({
   video: { type: Object, required: true },
 })
-const emit = defineEmits(['download', 'open-vip'])
+const emit = defineEmits(['download', 'open-vip', 'summarize'])
 
 function fmtBytes(n) {
   if (!n && n !== 0) return ''
@@ -265,6 +265,22 @@ async function onDownloadAudio() {
               <span>{{ downloadingAudio ? '排队中…' : '仅下载音频' }}</span>
             </button>
           </div>
+
+          <button
+            class="btn-summary w-full !py-3.5"
+            @click="$emit('summarize', video)"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2 L12 4"/>
+              <path d="M12 20 L12 22"/>
+              <path d="M4.93 4.93 L6.34 6.34"/>
+              <path d="M17.66 17.66 L19.07 19.07"/>
+              <path d="M2 12 L4 12"/>
+              <path d="M20 12 L22 12"/>
+              <circle cx="12" cy="12" r="4"/>
+            </svg>
+            <span>AI 一键总结 · 提取要点 / 时间线 / 思维导图</span>
+          </button>
 
           <div
             v-if="video.hd_hint"

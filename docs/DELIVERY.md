@@ -1,7 +1,7 @@
 # 交付报告 · VidGrabPro
 
-> **当前版本**：0.1.3（2026-05-18）  
-> **范围**：MVP — 解析 / 下载 / 队列 / VIP 前端付费墙  
+> **当前版本**：0.2.0（2026-05-18）  
+> **范围**：MVP — 解析 / 下载 / 队列 / VIP 前端付费墙 + **AI 一键总结（字幕优先 + ASR 兜底 + LLM）**  
 > **架构说明**：[`ARCHITECTURE.md`](ARCHITECTURE.md) · **变更记录**：[`CHANGELOG.md`](CHANGELOG.md)
 
 ---
@@ -20,6 +20,12 @@
 - [x] **QuickTime 兼容** — `mp4_compat.py`，合并后 remux / H.264 优选
 - [x] **通用站点** — yt-dlp + `imageio-ffmpeg` 静态合并
 - [x] 错误中文化 — `_friendly_error`，不向终端用户索要安装步骤
+- [x] **AI 总结流水线** — `subtitle.py` + `transcriber.py` + `llm_client.py` + `summarizer.py` + `summary_jobs.py`
+- [x] `POST /api/summarize` / `GET /api/summarize/{id}` / `GET /api/summarize/{id}/stream` (SSE)
+- [x] 字幕优先：YouTube/通用平台直接拿手动+自动字幕（含中文自动翻译）
+- [x] ASR 兜底：本地 faster-whisper（默认）+ OpenAI 兼容 Whisper API 二选一
+- [x] LLM 流式：DeepSeek 默认 + OpenAI 兼容任意切换（Moonshot / Qwen / SiliconFlow / OpenAI）
+- [x] 输出结构：摘要 / 亮点 / 思考 Q&A / 术语 / 时间线 / mermaid 思维导图
 
 ### 前端
 
@@ -28,6 +34,7 @@
 - [x] `DownloadQueue`：进度条、速度/ETA、「保存到本地」
 - [x] `PricingSection` / `VipModal`：三档价格、邮箱占座
 - [x] 响应式：移动端胶囊上下布局、模态底部抽屉
+- [x] **`VideoSummaryCard`**：AI 总结按钮 + SSE 流式渲染（marked + mermaid），步骤进度、字幕折叠、思维导图折叠、复制 Markdown
 
 ### 工程文档
 
@@ -35,12 +42,15 @@
 - [x] `docs/ARCHITECTURE.md` — 架构与扩展
 - [x] `docs/CHANGELOG.md` — 版本记录
 - [x] 本文件 — 验收与路线图
+- [x] `docs/AI_SUMMARY.md` — AI 总结专册（配置 / 流水线 / 自动化测试记录 / 排障）
 
 ---
 
-## 二、人工验收步骤（约 5 分钟）
+## 二、人工验收步骤（约 5 分钟 + AI 总结另外 5 分钟）
 
 > **前置**：`pip install -r backend/requirements.txt`、`npm install`。**不需要** `brew install ffmpeg`，**不需要** 放置 `cookies.txt`。
+>
+> **如要测试 AI 总结**：`cp backend/env.example backend/.env`，编辑 `OPENAI_API_KEY=<你的 DeepSeek key>`，然后重启 uvicorn。
 
 ### 启动
 
@@ -78,6 +88,30 @@ cd frontend && npm run dev
 - [ ] 邮箱占座后显示「已为你预留 VIP 名额」
 - [ ] 开发者工具 iPhone 12 宽度下布局正常
 
+### D. AI 总结（核心新功能）
+
+> 配置说明、SSE 协议、自动化测试记录与排障见 **[`docs/AI_SUMMARY.md`](AI_SUMMARY.md)**。
+
+#### D-1 YouTube（走字幕，最快）
+- [ ] 粘贴 `https://www.youtube.com/watch?v=dQw4w9WgXcQ` → 解析成功
+- [ ] 点击紫色「AI 一键总结」按钮
+- [ ] 进度条流转：解析视频 → **尝试字幕（成功）** → AI 总结中
+- [ ] 看到中文 markdown 流式逐字出现：摘要 / 亮点 / 思考 / 时间线 [00:00] [01:23] / mermaid 思维导图
+- [ ] 点击「思维导图」折叠面板 → 看到 SVG 渲染的脑图
+- [ ] 点击「字幕脚本 (60 段)」展开 → 看到带时间戳的原文
+
+#### D-2 抖音（走 ASR，最先消耗 70MB 模型）
+- [ ] 粘贴任意 `/video/{id}` → 解析
+- [ ] 点击 AI 总结
+- [ ] 进度条：解析 → **「该视频无可用字幕，将通过音频转写…」** → 下载音频 → **「首次加载语音模型，可能需要 1-2 分钟」**（仅首次）→ 转写中 X% → AI 总结
+- [ ] 看到 markdown 流式生成
+- [ ] 字幕脚本里能看到 whisper 转写的句子（可能有同音字错误，属正常）
+
+#### D-3 B 站（走 ASR）
+- [ ] 粘贴一个**短** B 站视频（< 5 分钟，避免久等）
+- [ ] 同 D-2 流程；B 站音频比抖音稍大
+- [ ] 总结完毕后「复制 Markdown」按钮 → 粘贴到 Typora 验证格式
+
 ### 命令行抽检（可选）
 
 ```bash
@@ -105,6 +139,15 @@ curl -s -X POST http://127.0.0.1:8765/api/parse \
 | 抖音无水印 mp4 下载 (~12MB) | ✅ | 0.1.2 |
 | 前端解析 → 队列 → 保存 | ✅ | 0.1.0+ |
 | VIP 弹窗 | ✅ | 0.1.0 |
+| `/api/health` 含 LLM/Whisper 描述 | ✅ | 0.2.0 |
+| YouTube 字幕路径打通：60 段中英可识别 | ✅ | 0.2.0 |
+| `POST /api/summarize` + SSE 端到端 | ✅（无 key 时回 friendly error） | 0.2.0 |
+| 前端 SummaryCard：进度条 + 步骤指示 + 错误重试 | ✅ | 0.2.0 |
+| B 站 / 抖音字幕探测跳过 | ✅ 2026-05-18 自动化 | 0.2.0 |
+| 抖音 ASR：下载音频 + faster-whisper 转写 | ✅ 15 段（示例短视频，无 LLM key） | 0.2.0 |
+| D-1 YouTube：DeepSeek 流式输出 + mermaid + 字幕 60 段 | ✅ 2026-05-18 浏览器验收，3–5s 完成 | 0.2.0 |
+| D-2 抖音：ASR 路径 + DeepSeek 中文总结 | ✅ 2026-05-18 浏览器验收，~20s 完成 | 0.2.0 |
+| D-3 B 站：ASR（VAD 空结果自动回退）+ DeepSeek 总结 | ✅ 2026-05-18 API 验收，24 段 / ~6min | 0.2.0 |
 
 ---
 
@@ -119,6 +162,10 @@ curl -s -X POST http://127.0.0.1:8765/api/parse \
 | B 站游客画质 | 接口常见最高 480p，非产品 bug | 大会员/登录流需后续扫码方案 |
 | 小红书等 | 仍走 yt-dlp，部分需登录 | 按需加 `platforms/` 直采 |
 | Job / 文件 | 内存 + 临时目录 | OSS + 下载历史 |
+| AI 总结需 LLM key | DeepSeek 等 OpenAI 兼容 key，按 token 计费（DeepSeek 极便宜，10 分钟视频 ≈ ¥0.02） | 后续可加自托管 LLM 选项 |
+| 本地 Whisper 首次下载 ~70MB 模型 | 仅一次性、放在 HF 缓存目录 | 可改 `WHISPER_BACKEND=api` 走远程，零本地存储 |
+| 长视频 ASR 较慢 | CPU 上 10 分钟视频 ~2 分钟转写 | 切 `WHISPER_BACKEND=api` 或 `WHISPER_DEVICE=cuda` |
+| 同步阻塞下载音频 | 大视频时进度更新可能短暂卡顿 | 改异步分段下载（P2） |
 
 ---
 
@@ -133,9 +180,17 @@ curl -s -X POST http://127.0.0.1:8765/api/parse \
 | [`backend/app/mp4_compat.py`](../backend/app/mp4_compat.py) | QuickTime / H.264 兼容 |
 | [`backend/app/ffmpeg_check.py`](../backend/app/ffmpeg_check.py) | ffmpeg 路径 |
 | [`backend/app/jobs.py`](../backend/app/jobs.py) | Job 状态机 |
+| [`backend/app/subtitle.py`](../backend/app/subtitle.py) | **AI 总结** · 平台字幕抓取与多格式解析 |
+| [`backend/app/transcriber.py`](../backend/app/transcriber.py) | **AI 总结** · faster-whisper 本地 / API 双后端 |
+| [`backend/app/llm_client.py`](../backend/app/llm_client.py) | **AI 总结** · OpenAI 兼容流式 Chat |
+| [`backend/app/summarizer.py`](../backend/app/summarizer.py) | **AI 总结** · pipeline 编排 + 音频下载 + Prompt |
+| [`backend/app/summary_jobs.py`](../backend/app/summary_jobs.py) | **AI 总结** · 内存任务 + 事件队列 |
+| [`backend/env.example`](../backend/env.example) | **AI 总结** · 复制为 `.env` 后填 key |
+| [`docs/AI_SUMMARY.md`](AI_SUMMARY.md) | **AI 总结** · 专册：配置 / 验收 / 测试记录 / 排障 |
 | [`frontend/src/components/HeroSection.vue`](../frontend/src/components/HeroSection.vue) | 粘贴与解析 |
-| [`frontend/src/components/VideoResultCard.vue`](../frontend/src/components/VideoResultCard.vue) | 结果卡与下载 |
+| [`frontend/src/components/VideoResultCard.vue`](../frontend/src/components/VideoResultCard.vue) | 结果卡与下载 + AI 总结按钮 |
 | [`frontend/src/components/DownloadQueue.vue`](../frontend/src/components/DownloadQueue.vue) | 进度与保存 |
+| [`frontend/src/components/VideoSummaryCard.vue`](../frontend/src/components/VideoSummaryCard.vue) | **AI 总结** · SSE 渲染 + mermaid + 字幕折叠 |
 
 ---
 
@@ -155,9 +210,10 @@ curl -s -X POST http://127.0.0.1:8765/api/parse \
 
 ### P2 · 溢价
 
-7. AI 摘要（Whisper + LLM）  
-8. 字幕翻译导出 SRT  
-9. 云端转码 + OSS
+7. ~~AI 摘要（Whisper + LLM）~~  ✅ 0.2.0 已交付
+8. 字幕翻译导出 SRT
+9. AI 总结历史 / 收藏 / 重新生成
+10. 云端转码 + OSS
 
 ### P3 · 工程
 
@@ -173,6 +229,7 @@ curl -s -X POST http://127.0.0.1:8765/api/parse \
 
 | 版本 | 要点 |
 |------|------|
+| **0.2.0** | **AI 一键总结**：字幕优先（YouTube）+ faster-whisper 兜底（抖音/B站）+ DeepSeek 流式；SSE；mermaid 思维导图；前端 `VideoSummaryCard` |
 | **0.1.3** | B 站自研 WBI 解析；`mp4_compat`；BV 大小写修复；QuickTime 可播 |
 | **0.1.2** | 抖音 iesdouyin 直采；`imageio-ffmpeg`；取消用户侧 ffmpeg/cookies 操作 |
 | **0.1.1** | URL 规范化、`ffmpeg_available`、错误中文化（cookies 方案已由 0.1.2 替代） |

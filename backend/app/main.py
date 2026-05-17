@@ -2,25 +2,48 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from queue import Empty
+from typing import Iterator
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from .downloader import _friendly_error, cleanup_job, parse_video, start_download
 from .ffmpeg_check import ffmpeg_available, ffmpeg_status
 from .jobs import jobs
+from .llm_client import describe_config as llm_describe
 from .schemas import (
     DownloadRequest,
     DownloadResponse,
     ParseRequest,
     ParseResponse,
     ProgressResponse,
+    SummarizeRequest,
+    SummarizeResponse,
+    SummaryStatusResponse,
+    SummaryVideoMeta,
 )
+from .summarizer import get_summary_meta, start_summary
+from .summary_jobs import EVENT_END, summary_jobs
+from .transcriber import describe_backend as whisper_describe
+
+# Load .env once at import time so OPENAI_API_KEY / WHISPER_* are visible
+# to the rest of the app. ``python-dotenv`` is optional — we tolerate its
+# absence so the download-only feature keeps working without a key.
+try:
+    from dotenv import load_dotenv
+
+    _env_path = Path(__file__).resolve().parent.parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+except ImportError:  # pragma: no cover
+    pass
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -55,7 +78,14 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "ffmpeg": ffmpeg_status()}
+    return {
+        "ok": True,
+        "ffmpeg": ffmpeg_status(),
+        "summary": {
+            "llm": llm_describe(),
+            "whisper": whisper_describe(),
+        },
+    }
 
 
 @app.post("/api/parse", response_model=ParseResponse)
@@ -95,6 +125,86 @@ def api_progress(job_id: str) -> ProgressResponse:
         filename=os.path.basename(job.filename) if job.filename else None,
         error=job.error,
     )
+
+
+# --- AI summary -----------------------------------------------------------
+
+
+@app.post("/api/summarize", response_model=SummarizeResponse)
+def api_summarize(req: SummarizeRequest) -> SummarizeResponse:
+    if not req.url.strip():
+        raise HTTPException(status_code=400, detail="url is required")
+    task_id = start_summary(req.url.strip())
+    return SummarizeResponse(task_id=task_id)
+
+
+@app.get("/api/summarize/{task_id}", response_model=SummaryStatusResponse)
+def api_summary_status(task_id: str) -> SummaryStatusResponse:
+    job = summary_jobs.get(task_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="summary task not found")
+    snapshot = get_summary_meta(job)
+    meta = snapshot.get("meta")
+    return SummaryStatusResponse(
+        id=snapshot["id"],
+        stage=snapshot["stage"],
+        stage_msg=snapshot["stage_msg"],
+        percent=snapshot["percent"],
+        meta=SummaryVideoMeta(**meta) if meta else None,
+        source=snapshot.get("source"),
+        language=snapshot.get("language"),
+        summary_md=snapshot.get("summary_md") or "",
+        transcript_count=snapshot.get("transcript_count") or 0,
+        error=snapshot.get("error"),
+    )
+
+
+@app.get("/api/summarize/{task_id}/stream")
+def api_summary_stream(task_id: str) -> StreamingResponse:
+    """Server-sent events: pushes the worker's events as they happen.
+
+    Event names: ``stage``, ``meta``, ``source``, ``transcript``,
+    ``delta``, ``done``, ``error``. The stream auto-closes after ``done``
+    or ``error``. Clients can reconnect via the polling endpoint above.
+    """
+    job = summary_jobs.get(task_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="summary task not found")
+
+    def _gen() -> Iterator[bytes]:
+        # First push: replay everything we already know so a late-joining
+        # client doesn't miss the meta/source we emitted before the SSE
+        # connection was opened.
+        snapshot = get_summary_meta(job)
+        yield _sse_pack("snapshot", snapshot)
+
+        while True:
+            try:
+                item = job.events.get(timeout=30.0)
+            except Empty:
+                # heartbeat keeps the connection alive through proxies
+                yield b": keep-alive\n\n"
+                continue
+            if item is EVENT_END:
+                yield _sse_pack("close", {"reason": "stream ended"})
+                break
+            event_name, data = item
+            yield _sse_pack(event_name, data)
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # disable nginx buffering
+        },
+    )
+
+
+def _sse_pack(event: str, data: object) -> bytes:
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
 
 
 @app.get("/api/file/{job_id}")

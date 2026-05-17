@@ -4,6 +4,12 @@
 
 :root {
   color-scheme: light;
+  --ink: #2c2825;
+  --muted: #5c5348;
+  --paper: #faf8f5;
+  --line: #e5ddd2;
+  --accent: #7a9168;
+  --wine: #a67b6b;
 }
 
 html,
@@ -14,45 +20,107 @@ body,
 
 body {
   font-feature-settings: 'cv11', 'ss01';
-  background: #F7F8FB;
+  background: var(--paper);
+  color: var(--ink);
 }
 
-/* Custom utility classes */
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-full bg-cta-grad px-6 py-3 text-sm font-semibold text-white shadow-soft transition hover:shadow-hover hover:-translate-y-0.5 active:translate-y-0;
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-cta-grad px-6 py-3 text-sm font-medium text-white shadow-soft transition hover:shadow-hover hover:-translate-y-0.5 active:translate-y-0;
   }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-medium text-ink ring-1 ring-slate-200 transition hover:ring-brand-400 hover:text-brand-600;
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-white/80 px-5 py-2.5 text-sm font-medium text-muted ring-1 ring-[#E5DDD2] transition hover:ring-brand-400 hover:text-brand-700;
   }
 
   .btn-vip {
-    @apply inline-flex items-center justify-center gap-2 rounded-full bg-vip-grad px-6 py-3 text-sm font-semibold text-white shadow-vip transition hover:-translate-y-0.5;
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-vip-grad px-6 py-3 text-sm font-semibold text-ink shadow-vip transition hover:-translate-y-0.5;
+  }
+
+  .btn-summary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-medium text-white shadow-soft transition hover:shadow-hover hover:-translate-y-0.5 active:translate-y-0 bg-summary-grad;
   }
 
   .chip {
-    @apply inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:ring-brand-400 hover:text-brand-600 cursor-pointer;
+    @apply inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3.5 py-1.5 text-xs font-medium text-muted ring-1 ring-[#E5DDD2] transition hover:ring-brand-300 hover:text-brand-700 cursor-pointer backdrop-blur-sm;
   }
 
   .card {
-    @apply rounded-2xl bg-white shadow-soft ring-1 ring-slate-100;
+    @apply rounded-2xl bg-white/90 shadow-soft ring-1 ring-[#EDE6DB] backdrop-blur-sm;
+  }
+
+  .card-elegant {
+    @apply rounded-2xl bg-gradient-to-b from-white to-[#FAF7F2] shadow-soft ring-1 ring-[#E5DDD2];
   }
 
   .text-grad {
     @apply bg-text-grad bg-clip-text text-transparent;
   }
+
+  .divider-ornament {
+    @apply flex items-center gap-3 text-xs text-brand-400 tracking-[0.2em] uppercase;
+  }
+
+  .divider-ornament::before,
+  .divider-ornament::after {
+    content: '';
+    @apply flex-1 h-px bg-gradient-to-r from-transparent via-[#D9CFC0] to-transparent;
+  }
 }
 
-/* Hide spinner on number inputs */
+/* Subtle paper grain for hero */
+.paper-grain {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+}
+
 input::-webkit-outer-spin-button,
 input::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
 
-/* Subtle dot grid for the hero background */
-.dot-grid {
-  background-image: radial-gradient(rgba(47, 115, 255, 0.08) 1px, transparent 1px);
-  background-size: 22px 22px;
+/* Mindmap — override mermaid defaults for 文雅 palette */
+.mindmap-elegant svg {
+  max-width: 100%;
+  height: auto;
+  font-family: 'Noto Serif SC', 'Songti SC', serif !important;
+}
+
+.mindmap-elegant svg .node rect,
+.mindmap-elegant svg .node circle,
+.mindmap-elegant svg .node polygon,
+.mindmap-elegant svg .node path {
+  fill: #F3EDE4 !important;
+  stroke: #C9B99A !important;
+  stroke-width: 1.5px !important;
+}
+
+.mindmap-elegant svg .node:nth-child(odd) rect,
+.mindmap-elegant svg g:nth-of-type(odd) .node rect {
+  fill: #EDE6DB !important;
+}
+
+.mindmap-elegant svg .nodeLabel,
+.mindmap-elegant svg .node text,
+.mindmap-elegant svg text {
+  fill: #3d3832 !important;
+  font-family: 'Noto Serif SC', 'Songti SC', serif !important;
+  font-size: 14px !important;
+}
+
+.mindmap-elegant svg .edgePath path,
+.mindmap-elegant svg .edgePaths path,
+.mindmap-elegant svg line {
+  stroke: #B8A990 !important;
+  stroke-width: 1.5px !important;
+}
+
+.mindmap-elegant svg .section-root .node rect {
+  fill: #E8E0D4 !important;
+  stroke: #8B7355 !important;
+}
+
+.mindmap-elegant svg marker path {
+  fill: #B8A990 !important;
+  stroke: #B8A990 !important;
 }

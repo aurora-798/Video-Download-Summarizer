@@ -62,3 +62,36 @@ class ProgressResponse(BaseModel):
     eta: Optional[int] = None
     filename: Optional[str] = None
     error: Optional[str] = None
+
+
+# --- AI summary ---------------------------------------------------------
+
+
+class SummarizeRequest(BaseModel):
+    url: str = Field(..., description="Video URL to summarize")
+
+
+class SummarizeResponse(BaseModel):
+    task_id: str
+
+
+class SummaryVideoMeta(BaseModel):
+    title: str
+    thumbnail: Optional[str] = None
+    duration: Optional[float] = None
+    uploader: Optional[str] = None
+    extractor: Optional[str] = None
+    webpage_url: Optional[str] = None
+
+
+class SummaryStatusResponse(BaseModel):
+    id: str
+    stage: str
+    stage_msg: str
+    percent: float = 0.0
+    meta: Optional[SummaryVideoMeta] = None
+    source: Optional[str] = None  # "subtitle" | "asr"
+    language: Optional[str] = None
+    summary_md: str = ""
+    transcript_count: int = 0
+    error: Optional[str] = None

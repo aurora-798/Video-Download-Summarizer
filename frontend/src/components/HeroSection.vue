@@ -11,15 +11,14 @@ const emit = defineEmits(['update:parsing', 'update:parsed', 'update:error'])
 
 const url = ref('')
 const platforms = [
-  { name: 'YouTube', color: 'text-red-500' },
-  { name: 'Bilibili', color: 'text-pink-500' },
-  { name: '抖音', color: 'text-slate-800' },
-  { name: 'TikTok', color: 'text-slate-800' },
-  { name: '小红书', color: 'text-red-500' },
-  { name: 'X / Twitter', color: 'text-slate-800' },
-  { name: 'Instagram', color: 'text-fuchsia-500' },
-  { name: '微博', color: 'text-orange-500' },
-  { name: 'Facebook', color: 'text-blue-600' },
+  { name: 'YouTube', tone: 'bg-red-400/70' },
+  { name: 'Bilibili', tone: 'bg-pink-400/70' },
+  { name: '抖音', tone: 'bg-stone-500/70' },
+  { name: 'TikTok', tone: 'bg-stone-600/70' },
+  { name: '小红书', tone: 'bg-rose-400/70' },
+  { name: 'X', tone: 'bg-stone-500/70' },
+  { name: 'Instagram', tone: 'bg-fuchsia-400/70' },
+  { name: '微博', tone: 'bg-orange-400/70' },
 ]
 
 const canSubmit = computed(() => url.value.trim().length > 4 && !props.parsing)
@@ -56,78 +55,64 @@ async function onPasteAndParse() {
 </script>
 
 <template>
-  <section class="relative overflow-hidden bg-hero-grad pb-20 md:pb-28">
-    <div class="absolute inset-0 dot-grid opacity-60 pointer-events-none"></div>
+  <section class="relative overflow-hidden bg-hero-grad paper-grain pb-24 md:pb-32">
+    <div class="absolute inset-0 bg-paper-texture opacity-40 pointer-events-none" />
 
-    <div class="absolute -top-20 -left-20 h-72 w-72 rounded-full bg-brand-200/40 blur-3xl pointer-events-none"></div>
-    <div class="absolute top-20 -right-24 h-80 w-80 rounded-full bg-accent-400/30 blur-3xl pointer-events-none"></div>
+    <div class="absolute -top-32 left-1/2 -translate-x-1/2 w-[min(900px,90vw)] h-64 rounded-full bg-brand-100/50 blur-3xl pointer-events-none" />
+    <div class="absolute bottom-0 right-0 w-72 h-72 rounded-full bg-accent-400/15 blur-3xl pointer-events-none" />
 
-    <div class="relative max-w-5xl mx-auto px-4 md:px-8 pt-16 md:pt-24 text-center">
-      <div class="inline-flex items-center gap-2 rounded-full bg-white/70 backdrop-blur px-4 py-1.5 text-xs font-medium text-brand-700 ring-1 ring-brand-100 shadow-soft">
-        <span class="inline-block h-1.5 w-1.5 rounded-full bg-brand-500 animate-pulse"></span>
-        已稳定服务 10w+ 用户 · 每日更新平台适配
-      </div>
-
-      <h1 class="mt-6 font-extrabold tracking-tight text-4xl md:text-6xl leading-tight">
-        <span class="text-grad">万能视频下载</span>
-        <span class="text-ink">， 一粘即下</span>
-      </h1>
-      <p class="mt-5 text-base md:text-xl text-slate-500 max-w-2xl mx-auto">
-        支持 <b class="text-ink">1000+</b> 平台 · 4K/8K 高清 · 批量并发 · 手机也能用 · 无水印
+    <div class="relative max-w-3xl mx-auto px-4 md:px-8 pt-20 md:pt-28 text-center">
+      <p class="divider-ornament font-serif">
+        <span>览影知意</span>
       </p>
 
-      <form @submit.prevent="onParse" class="mt-10 mx-auto max-w-3xl">
-        <div class="flex flex-col md:flex-row items-stretch gap-3 md:gap-2 bg-white rounded-3xl md:rounded-full shadow-soft ring-1 ring-slate-100 p-2 md:pl-6">
-          <div class="flex-1 flex items-center gap-3">
-            <svg class="hidden md:block text-slate-400" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10 14a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+      <h1 class="mt-8 font-serif font-semibold tracking-wide text-4xl md:text-[2.75rem] leading-[1.35] text-ink">
+        粘贴链接，<span class="text-grad">静候一方笔记</span>
+      </h1>
+
+      <p class="mt-6 text-base md:text-lg text-muted leading-relaxed max-w-xl mx-auto font-light">
+        万能下载与 AI 结构化总结 — 支持主流平台，字幕优先、语音兜底，助你快速把握视频要义。
+      </p>
+
+      <form @submit.prevent="onParse" class="mt-12 mx-auto max-w-2xl">
+        <div class="flex flex-col md:flex-row items-stretch gap-3 md:gap-0 bg-white/85 backdrop-blur-md rounded-2xl md:rounded-full shadow-soft ring-1 ring-[#E5DDD2] p-2 md:pl-6 md:pr-2">
+          <div class="flex-1 flex items-center gap-3 min-w-0">
+            <svg class="hidden md:block shrink-0 text-brand-400" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
               <path d="M14 10a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
             </svg>
             <input
               v-model="url"
               type="url"
-              placeholder="粘贴视频链接，如：https://www.bilibili.com/video/BVxxxx"
-              class="w-full bg-transparent py-3 md:py-4 text-sm md:text-base placeholder-slate-400 outline-none"
+              placeholder="粘贴视频链接，如 bilibili.com/video/BV…"
+              class="w-full bg-transparent py-3.5 md:py-4 text-sm md:text-[15px] text-ink placeholder:text-brand-300 outline-none font-light"
               :disabled="parsing"
             />
           </div>
-          <div class="flex gap-2">
-            <button
-              type="button"
-              class="btn-ghost shrink-0"
-              @click="onPasteAndParse"
-              :disabled="parsing"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="8" y="2" width="8" height="4" rx="1"/>
-                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
-              </svg>
+          <div class="flex gap-2 shrink-0">
+            <button type="button" class="btn-ghost !text-xs md:!text-sm" @click="onPasteAndParse" :disabled="parsing">
               粘贴
             </button>
-            <button
-              type="submit"
-              class="btn-primary shrink-0 !px-7 !py-3 md:!py-3.5"
-              :disabled="!canSubmit"
-            >
-              <span v-if="!parsing">立即解析</span>
+            <button type="submit" class="btn-primary !px-6 !py-3" :disabled="!canSubmit">
+              <span v-if="!parsing">开始解析</span>
               <span v-else class="flex items-center gap-2">
-                <span class="inline-block h-4 w-4 rounded-full border-2 border-white/60 border-t-transparent animate-spin"></span>
-                解析中…
+                <span class="inline-block h-3.5 w-3.5 rounded-full border-2 border-white/50 border-t-transparent animate-spin"></span>
+                解析中
               </span>
             </button>
           </div>
         </div>
       </form>
 
-      <div class="mt-8 flex flex-wrap items-center justify-center gap-2 text-slate-500">
-        <span class="text-xs mr-1">热门平台：</span>
+      <div class="mt-10 flex flex-wrap items-center justify-center gap-2">
+        <span class="text-[11px] text-brand-400 tracking-widest uppercase mr-1">平台</span>
         <span
           v-for="p in platforms"
           :key="p.name"
-          class="chip"
+          class="chip !py-1 !px-3"
           @click="url = 'https://'; document.querySelector('input[type=url]')?.focus()"
         >
-          <span class="h-1.5 w-1.5 rounded-full bg-current" :class="p.color"></span>
+          <span class="h-1 w-1 rounded-full" :class="p.tone"></span>
           {{ p.name }}
         </span>
       </div>

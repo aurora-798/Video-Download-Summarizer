@@ -1,9 +1,10 @@
 <script setup>
-import { ref, provide } from 'vue'
+import { nextTick, ref, provide, useTemplateRef, watch } from 'vue'
 import TopNav from './components/TopNav.vue'
 import HeroSection from './components/HeroSection.vue'
 import VideoResultCard from './components/VideoResultCard.vue'
 import DownloadQueue from './components/DownloadQueue.vue'
+import VideoSummaryCard from './components/VideoSummaryCard.vue'
 import FeaturesSection from './components/FeaturesSection.vue'
 import PricingSection from './components/PricingSection.vue'
 import FAQSection from './components/FAQSection.vue'
@@ -15,6 +16,21 @@ const parseError = ref('')
 const parsing = ref(false)
 const queue = ref([]) // list of jobs: { jobId, title, thumbnail, formatLabel, ... }
 
+const summaryVideo = ref(null)
+const summaryCardRef = useTemplateRef('summaryCardRef')
+async function onSummarize(video) {
+  summaryVideo.value = video
+  await nextTick()
+  // Auto-scroll into view and kick off the pipeline.
+  summaryCardRef.value?.begin?.()
+  document.getElementById('summary-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+function closeSummary() {
+  summaryCardRef.value?.reset?.()
+  summaryVideo.value = null
+}
+watch(parsedVideo, () => { closeSummary() })
+
 const vipOpen = ref(false)
 const vipReason = ref('')
 function openVip(reason = '') {
@@ -25,7 +41,7 @@ provide('openVip', openVip)
 </script>
 
 <template>
-  <div class="min-h-screen flex flex-col">
+  <div class="min-h-screen flex flex-col bg-paper">
     <TopNav @open-vip="openVip('立即开通会员')" />
 
     <main class="flex-1">
@@ -55,6 +71,15 @@ provide('openVip', openVip)
           :video="parsedVideo"
           @download="(payload) => queue.unshift(payload)"
           @open-vip="(reason) => openVip(reason)"
+          @summarize="onSummarize"
+        />
+
+        <div id="summary-anchor"></div>
+        <VideoSummaryCard
+          v-if="summaryVideo"
+          ref="summaryCardRef"
+          :video="summaryVideo"
+          @close="closeSummary"
         />
 
         <DownloadQueue v-if="queue.length" :jobs="queue" @open-vip="openVip('解锁批量并发下载')" />

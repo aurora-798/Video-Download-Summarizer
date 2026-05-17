@@ -1,12 +1,14 @@
-# VidGrabPro · 万能视频下载
+# VidGrabPro · 万能视频下载 & AI 总结
 
-> 粘贴链接，一键下载。抖音 / B 站**开箱即用**（自研解析，无需 cookies）；YouTube 等其余站点由下载引擎驱动。前端为明亮卡片风落地页 + VIP 转化占位。
+> 粘贴链接，一键下载 + 一键 AI 总结。抖音 / B 站**开箱即用**（自研解析，无需 cookies）；YouTube 等其余站点由下载引擎驱动。`AI 总结`走「字幕优先 + 语音转写兜底 + LLM 结构化笔记」标准流水线（对标 bibigpt.co）。
 
 ![tech](https://img.shields.io/badge/Backend-FastAPI-009688)
 ![tech](https://img.shields.io/badge/Frontend-Vue3-42b883)
 ![tech](https://img.shields.io/badge/Engine-yt--dlp-red)
 ![tech](https://img.shields.io/badge/Douyin-自研直采-000000)
 ![tech](https://img.shields.io/badge/Bilibili-自研WBI-pink)
+![tech](https://img.shields.io/badge/ASR-faster--whisper-purple)
+![tech](https://img.shields.io/badge/LLM-DeepSeek-2F73FF)
 
 ---
 
@@ -18,6 +20,8 @@
 | **B 站零配置** | BV/av 链接、短链 `b23.tv`；WBI 接口取流 + ffmpeg 合并，优先 H.264 |
 | **1000+ 站点** | 其余平台走通用引擎，随上游更新 |
 | **ffmpeg 随 pip 安装** | `imageio-ffmpeg` 提供静态二进制，**不必** `brew install ffmpeg` |
+| **AI 一键总结** | 字幕优先（YouTube）+ 本地 Whisper 兜底（抖音/B 站）→ DeepSeek 结构化 markdown，SSE 流式呈现 |
+| **思维导图** | 总结同步生成 mermaid `mindmap`，前端折叠渲染 |
 | **用户无感** | 不要求导出 cookies、不要求手动装系统依赖 |
 
 ---
@@ -29,10 +33,12 @@ video_download_project/
 ├── README.md
 ├── docs/
 │   ├── ARCHITECTURE.md      # 架构、平台分流、扩展指南
+│   ├── AI_SUMMARY.md        # AI 总结：配置、流水线、验收、排障
 │   ├── DELIVERY.md          # 功能清单与验收步骤
 │   └── CHANGELOG.md         # 版本记录
 ├── backend/
 │   ├── requirements.txt
+│   ├── env.example          # 复制为 .env 后填 DeepSeek key
 │   └── app/
 │       ├── main.py
 │       ├── downloader.py    # 解析/下载编排
@@ -40,10 +46,15 @@ video_download_project/
 │       ├── schemas.py
 │       ├── ffmpeg_check.py
 │       ├── url_normalizer.py
+│       ├── subtitle.py      # 【AI 总结】平台字幕抓取（yt-dlp + 解析 vtt/srv3/json3）
+│       ├── transcriber.py   # 【AI 总结】faster-whisper 本地 / OpenAI Whisper API
+│       ├── llm_client.py    # 【AI 总结】OpenAI 兼容流式 Chat 客户端
+│       ├── summarizer.py    # 【AI 总结】pipeline 编排 + SSE 事件
+│       ├── summary_jobs.py  # 【AI 总结】内存任务 + 事件队列
 │       └── platforms/
 │           ├── douyin.py    # 抖音 iesdouyin 直采
 │           └── bilibili.py  # B 站 WBI playurl 直采
-└── frontend/                # Vite + Vue3 + TailwindCSS
+└── frontend/                # Vite + Vue3 + TailwindCSS + marked + mermaid
 ```
 
 ---
@@ -63,9 +74,17 @@ video_download_project/
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt    # 含 yt-dlp、imageio-ffmpeg（首次会下载静态 ffmpeg）
+pip install -r requirements.txt    # 含 yt-dlp、imageio-ffmpeg、faster-whisper（首次会下载静态 ffmpeg）
+
+# AI 总结要先配置 LLM key（仅总结功能需要，下载功能不依赖）
+cp env.example .env
+# 用编辑器把 OPENAI_API_KEY 改成自己的 DeepSeek key（默认）
+#  也可改 OPENAI_BASE_URL/OPENAI_MODEL 切换 Moonshot/Qwen/SiliconFlow/OpenAI
+
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload
 ```
+
+> 首次点击「AI 总结」**抖音/B 站**视频时，后端会下载 faster-whisper `base` 模型（~70MB）到 `~/.cache/huggingface/`，仅一次。后续秒响应。可以在 `.env` 里改 `WHISPER_MODEL=small/medium/large-v3` 提高中文识别精度，或 `WHISPER_BACKEND=api` 切到 SiliconFlow/OpenAI 的 Whisper 远程接口。
 
 ### 2. 前端（`:5173`）
 
@@ -113,7 +132,10 @@ cd frontend && npm run build    # → frontend/dist/
 | `POST` | `/api/download` | `{ "url", "format_id?", "audio_only?" }` → `{ "job_id" }` |
 | `GET` | `/api/progress/{job_id}` | 进度、速度、状态 |
 | `GET` | `/api/file/{job_id}` | 触发浏览器下载并清理临时文件 |
-| `GET` | `/api/health` | 健康检查 + ffmpeg 是否可用 |
+| `POST` | `/api/summarize` | `{ "url" }` → `{ "task_id" }` 启动 AI 总结 |
+| `GET` | `/api/summarize/{task_id}` | 总结快照（含累计 markdown、stage、source 等） |
+| `GET` | `/api/summarize/{task_id}/stream` | SSE 事件流：`stage` / `meta` / `source` / `transcript` / `delta` / `done` / `error` |
+| `GET` | `/api/health` | 健康检查 + ffmpeg + LLM/Whisper 配置状态 |
 
 模型定义见 [`backend/app/schemas.py`](backend/app/schemas.py)。
 
@@ -144,6 +166,7 @@ cd frontend && npm run build    # → frontend/dist/
 | 文档 | 内容 |
 |------|------|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 解析/下载流程、模块职责、扩展新平台 |
+| [`docs/AI_SUMMARY.md`](docs/AI_SUMMARY.md) | **AI 总结**：`.env` 配置、平台矩阵、SSE、D-1～D-3 验收、排障 |
 | [`docs/DELIVERY.md`](docs/DELIVERY.md) | 功能清单、5 分钟验收、已知限制 |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | 版本与补丁历史 |
 
