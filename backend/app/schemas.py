@@ -20,6 +20,7 @@ class FormatInfo(BaseModel):
     note: Optional[str] = None
     is_audio_only: bool = False
     is_video_only: bool = False
+    quicktime_friendly: bool = True
 
 
 class ParseResponse(BaseModel):
@@ -33,6 +34,9 @@ class ParseResponse(BaseModel):
     view_count: Optional[int] = None
     formats: List[FormatInfo] = []
     ffmpeg_available: bool = True
+    max_height: int = 0
+    cookies_configured: bool = False
+    hd_hint: Optional[str] = None
 
 
 class DownloadRequest(BaseModel):

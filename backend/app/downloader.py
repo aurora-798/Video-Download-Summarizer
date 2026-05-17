@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 import urllib.error
@@ -24,13 +25,53 @@ from yt_dlp.utils import DownloadError
 
 from .ffmpeg_check import ffmpeg_available, ffmpeg_path
 from .jobs import jobs
-from .platforms import douyin
+from .mp4_compat import (
+    drop_redundant_codecs,
+    ensure_quicktime_compatible,
+    prefer_quicktime_format_id,
+)
+from .platforms import bilibili, douyin
 from .url_normalizer import normalize_url
 
 # Project-wide download root (created on demand).
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 DOWNLOAD_ROOT = BACKEND_ROOT / "downloads"
 DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _ytdlp_base_opts(**extra: Any) -> Dict[str, Any]:
+    """Shared YoutubeDL options (quiet mode, etc.)."""
+    return {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        **extra,
+    }
+
+
+def _max_video_height(formats: List[Dict[str, Any]]) -> int:
+    heights = [
+        int(f["height"])
+        for f in formats
+        if not f.get("is_audio_only") and f.get("height")
+    ]
+    return max(heights) if heights else 0
+
+
+def _is_bilibili(extractor: Optional[str]) -> bool:
+    return "bili" in (extractor or "").lower()
+
+
+def _hd_hint(extractor: Optional[str], max_height: int) -> Optional[str]:
+    if not _is_bilibili(extractor):
+        return None
+    if max_height >= 720:
+        return None
+    return (
+        "当前链接在游客权限下最高约为 "
+        f"{max_height or 480}p；部分 UP 主或版权内容仅提供此清晰度。"
+        "若网页端可播更高画质，可能是大会员/登录专享流。"
+    )
 
 
 # --- parse ---------------------------------------------------------------
@@ -57,6 +98,11 @@ def _format_friendly(f: Dict[str, Any]) -> Dict[str, Any]:
         "note": f.get("format_note"),
         "is_audio_only": vcodec == "none" and acodec != "none",
         "is_video_only": acodec == "none" and vcodec != "none",
+        "quicktime_friendly": (
+            vcodec == "none"
+            or (vcodec or "").lower().startswith("avc")
+            or "h264" in (vcodec or "").lower()
+        ),
     }
 
 
@@ -65,8 +111,9 @@ def _format_friendly(f: Dict[str, Any]) -> Dict[str, Any]:
 # clicks "download" right after parse. Bounded to a soft 64 entries so we
 # don't grow unbounded across a long-running server.
 _DOUYIN_PLAN_CACHE: Dict[str, Dict[str, Dict[str, Any]]] = {}
-_DOUYIN_PLAN_LOCK = threading.Lock()
-_DOUYIN_PLAN_CAP = 64
+_BILI_PLAN_CACHE: Dict[str, Dict[str, Any]] = {}
+_PLATFORM_PLAN_LOCK = threading.Lock()
+_PLATFORM_PLAN_CAP = 64
 
 
 def _remember_douyin_plan(
@@ -80,9 +127,8 @@ def _remember_douyin_plan(
         }
         for f in formats
     }
-    with _DOUYIN_PLAN_LOCK:
-        if len(_DOUYIN_PLAN_CACHE) >= _DOUYIN_PLAN_CAP:
-            # Drop the oldest entry (insertion order in dict).
+    with _PLATFORM_PLAN_LOCK:
+        if len(_DOUYIN_PLAN_CACHE) >= _PLATFORM_PLAN_CAP:
             try:
                 _DOUYIN_PLAN_CACHE.pop(next(iter(_DOUYIN_PLAN_CACHE)))
             except StopIteration:
@@ -90,14 +136,50 @@ def _remember_douyin_plan(
         _DOUYIN_PLAN_CACHE[url] = by_id
 
 
+def _remember_bilibili_plan(url: str, meta: Dict[str, Any], formats: List[Dict[str, Any]]) -> None:
+    with _PLATFORM_PLAN_LOCK:
+        if len(_BILI_PLAN_CACHE) >= _PLATFORM_PLAN_CAP:
+            try:
+                _BILI_PLAN_CACHE.pop(next(iter(_BILI_PLAN_CACHE)))
+            except StopIteration:
+                pass
+        _BILI_PLAN_CACHE[url] = {"meta": meta, "formats": formats}
+
+
+def _lookup_bilibili_plan(url: str) -> Optional[Dict[str, Any]]:
+    with _PLATFORM_PLAN_LOCK:
+        return _BILI_PLAN_CACHE.get(url)
+
+
 def _lookup_douyin_plan(url: str, format_id: Optional[str]) -> Optional[Dict[str, Any]]:
-    with _DOUYIN_PLAN_LOCK:
+    with _PLATFORM_PLAN_LOCK:
         plans = _DOUYIN_PLAN_CACHE.get(url)
     if not plans:
         return None
     if format_id and format_id in plans:
         return plans[format_id]
     return next(iter(plans.values()), None)
+
+
+def _parse_bilibili(url: str) -> Dict[str, Any]:
+    meta, formats = bilibili.fetch(url)
+    _remember_bilibili_plan(url, meta, formats)
+    public_formats = [
+        {k: v for k, v in f.items() if not k.startswith("_")} for f in formats
+    ]
+    public_formats = drop_redundant_codecs(public_formats)
+    has_ffmpeg = ffmpeg_available()
+    if not has_ffmpeg:
+        public_formats = [f for f in public_formats if not f.get("is_video_only")]
+    max_height = _max_video_height(public_formats)
+    return {
+        **meta,
+        "formats": public_formats,
+        "ffmpeg_available": has_ffmpeg,
+        "max_height": max_height,
+        "cookies_configured": False,
+        "hd_hint": _hd_hint(meta.get("extractor"), max_height),
+    }
 
 
 def _parse_douyin(url: str) -> Dict[str, Any]:
@@ -116,12 +198,7 @@ def _parse_douyin(url: str) -> Dict[str, Any]:
 
 
 def _parse_with_ytdlp(url: str) -> Dict[str, Any]:
-    ydl_opts: Dict[str, Any] = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "noplaylist": True,
-    }
+    ydl_opts = _ytdlp_base_opts(skip_download=True)
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
         info = ydl.sanitize_info(info)
@@ -145,6 +222,9 @@ def _parse_with_ytdlp(url: str) -> Dict[str, Any]:
         return (kind, height, tbr)
 
     formats.sort(key=_sort_key)
+    display_formats = drop_redundant_codecs(formats)
+    extractor = info.get("extractor_key") or info.get("extractor")
+    max_height = _max_video_height(display_formats)
 
     return {
         "id": info.get("id"),
@@ -152,18 +232,39 @@ def _parse_with_ytdlp(url: str) -> Dict[str, Any]:
         "thumbnail": info.get("thumbnail"),
         "duration": info.get("duration"),
         "uploader": info.get("uploader") or info.get("channel"),
-        "extractor": info.get("extractor_key") or info.get("extractor"),
+        "extractor": extractor,
         "webpage_url": info.get("webpage_url") or url,
         "view_count": info.get("view_count"),
-        "formats": formats,
+        "formats": display_formats,
         "ffmpeg_available": has_ffmpeg,
+        "max_height": max_height,
+        "cookies_configured": False,
+        "hd_hint": _hd_hint(extractor, max_height),
     }
+
+
+def _all_formats_for_url(url: str) -> List[Dict[str, Any]]:
+    """Full format ladder (used when resolving download format_id)."""
+    url = normalize_url(url)
+    if bilibili.is_bilibili_url(url):
+        _, formats = bilibili.fetch(url)
+        return [
+            {k: v for k, v in f.items() if not k.startswith("_")} for f in formats
+        ]
+    ydl_opts = _ytdlp_base_opts(skip_download=True)
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        info = ydl.sanitize_info(info)
+    formats_raw: List[Dict[str, Any]] = info.get("formats") or []
+    return [_format_friendly(f) for f in formats_raw if f.get("format_id")]
 
 
 def parse_video(url: str) -> Dict[str, Any]:
     url = normalize_url(url)
     if douyin.is_douyin_url(url):
         return _parse_douyin(url)
+    if bilibili.is_bilibili_url(url):
+        return _parse_bilibili(url)
     return _parse_with_ytdlp(url)
 
 
@@ -238,21 +339,24 @@ def _run_ytdlp_download(
     has_ffmpeg = ffmpeg_available()
 
     ydl_opts: Dict[str, Any] = {
-        "outtmpl": outtmpl,
-        "noprogress": True,
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "progress_hooks": [_make_progress_hook(job_id)],
-        "concurrent_fragment_downloads": 4,
-        "retries": 3,
-        "fragment_retries": 3,
+        **_ytdlp_base_opts(
+            outtmpl=outtmpl,
+            noprogress=True,
+            progress_hooks=[_make_progress_hook(job_id)],
+            concurrent_fragment_downloads=4,
+            retries=3,
+            fragment_retries=3,
+        ),
     }
     # If ffmpeg lives in imageio-ffmpeg's site-packages rather than on PATH,
     # yt-dlp won't auto-find it. We point at it explicitly when available.
     ff = ffmpeg_path()
     if ff:
         ydl_opts["ffmpeg_location"] = ff
+        if not audio_only:
+            ydl_opts["postprocessor_args"] = {
+                "Merger+ffmpeg_merger": ["-movflags", "+faststart"],
+            }
 
     if audio_only:
         if has_ffmpeg:
@@ -266,6 +370,11 @@ def _run_ytdlp_download(
             ydl_opts["format"] = "bestaudio[ext=m4a]/bestaudio/best"
     elif format_id:
         if has_ffmpeg:
+            try:
+                all_fmts = _all_formats_for_url(url)
+                format_id = prefer_quicktime_format_id(all_fmts, format_id)
+            except Exception:  # noqa: BLE001
+                pass
             ydl_opts["format"] = f"{format_id}+bestaudio/best/{format_id}"
             ydl_opts["merge_output_format"] = "mp4"
         else:
@@ -294,6 +403,10 @@ def _run_ytdlp_download(
                 if files:
                     final_path = str(max(files, key=lambda p: p.stat().st_size))
 
+            if final_path and has_ffmpeg and not audio_only:
+                jobs.update(job_id, status="processing", percent=99.5, filename=final_path)
+                final_path = ensure_quicktime_compatible(final_path)
+
         jobs.update(
             job_id,
             status="finished",
@@ -303,6 +416,147 @@ def _run_ytdlp_download(
     except DownloadError as e:
         jobs.update(job_id, status="error", error=_friendly_error(str(e)))
     except Exception as e:  # noqa: BLE001
+        jobs.update(job_id, status="error", error=_friendly_error(f"{type(e).__name__}: {e}"))
+
+
+# --- download (Bilibili direct branch) -----------------------------------
+
+
+def _bilibili_formats_for_url(url: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    cached = _lookup_bilibili_plan(url)
+    if cached:
+        return cached["meta"], cached["formats"]
+    meta, formats = bilibili.fetch(url)
+    _remember_bilibili_plan(url, meta, formats)
+    return meta, formats
+
+
+def _ffmpeg_merge_bilibili(
+    video_path: Path, audio_path: Path, out_path: Path
+) -> None:
+    ff = ffmpeg_path()
+    if not ff:
+        raise RuntimeError("需要 ffmpeg 才能合并 B 站音视频，请执行 pip install -r requirements.txt")
+    cmd = [
+        ff,
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(audio_path),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(out_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "")[-600:]
+        raise RuntimeError(f"ffmpeg 合并失败：{tail}")
+
+
+def _run_bilibili_download(
+    job_id: str, url: str, format_id: Optional[str], audio_only: bool
+) -> None:
+    job_dir = DOWNLOAD_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        meta, formats = _bilibili_formats_for_url(url)
+        chosen = bilibili.resolve_download_target(formats, format_id, audio_only)
+    except (urllib.error.URLError, ValueError, RuntimeError) as e:
+        jobs.update(job_id, status="error", error=_friendly_error(f"{type(e).__name__}: {e}"))
+        return
+
+    title = meta.get("title") or "video"
+    referer = chosen.get("_referer") or bilibili.REFERER
+    headers = {"User-Agent": bilibili.DESKTOP_UA, "Referer": referer, "Accept": "*/*"}
+
+    def _download_url(
+        direct_url: str, dest: Path, progress_weight: float = 1.0
+    ) -> None:
+        jobs.update(job_id, status="downloading", percent=0.0, filename=str(dest))
+        last_update = 0.0
+        last_bytes = 0
+        started = time.monotonic()
+        chunk_size = 256 * 1024
+        req = urllib.request.Request(direct_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            total: Optional[int] = None
+            cl = resp.headers.get("Content-Length")
+            if cl and cl.isdigit():
+                total = int(cl)
+            downloaded = 0
+            with open(dest, "wb") as fh:
+                while True:
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    now = time.monotonic()
+                    if now - last_update >= 0.25 or (total and downloaded == total):
+                        pct = (downloaded / total * 90.0 * progress_weight) if total else 0.0
+                        speed = (downloaded - last_bytes) / max(now - last_update, 0.001)
+                        eta = int((total - downloaded) / speed) if (total and speed > 0) else None
+                        jobs.update(
+                            job_id,
+                            status="downloading",
+                            percent=round(pct, 2),
+                            downloaded_bytes=downloaded,
+                            total_bytes=total,
+                            speed=speed if speed > 0 else None,
+                            eta=eta,
+                            filename=str(dest),
+                        )
+                        last_update = now
+                        last_bytes = downloaded
+                        _ = started
+
+    try:
+        if chosen.get("_muxed"):
+            out = job_dir / _safe_filename(title, ext="mp4")
+            _download_url(chosen["_direct_url"], out, progress_weight=1.0)
+            final_path = str(ensure_quicktime_compatible(str(out)))
+        elif audio_only:
+            out = job_dir / _safe_filename(title, ext="m4a")
+            _download_url(chosen["_direct_url"], out)
+            final_path = str(out)
+            ff = ffmpeg_path()
+            if ff:
+                mp3_path = out.with_suffix(".mp3")
+                jobs.update(job_id, status="processing", percent=95.0)
+                subprocess.run(
+                    [ff, "-y", "-i", str(out), "-vn", "-acodec", "libmp3lame", "-q:a", "2", str(mp3_path)],
+                    check=True,
+                    capture_output=True,
+                )
+                out.unlink(missing_ok=True)
+                final_path = str(mp3_path)
+        else:
+            if not ffmpeg_available():
+                raise RuntimeError(
+                    "B 站视频为分轨格式，需 ffmpeg 合并。请执行 pip install -r requirements.txt"
+                )
+            vurl = chosen.get("_video_url") or chosen.get("_direct_url")
+            aurl = chosen.get("_audio_url")
+            if not vurl or not aurl:
+                raise RuntimeError("缺少视频或音频流地址，无法合并。")
+            vpath = job_dir / "video.m4s"
+            apath = job_dir / "audio.m4s"
+            _download_url(vurl, vpath, progress_weight=0.7)
+            _download_url(aurl, apath, progress_weight=0.2)
+            out = job_dir / _safe_filename(title, ext="mp4")
+            jobs.update(job_id, status="processing", percent=92.0, filename=str(out))
+            _ffmpeg_merge_bilibili(vpath, apath, out)
+            vpath.unlink(missing_ok=True)
+            apath.unlink(missing_ok=True)
+            jobs.update(job_id, status="processing", percent=99.0)
+            final_path = str(ensure_quicktime_compatible(str(out)))
+
+        jobs.update(job_id, status="finished", percent=100.0, filename=final_path)
+    except (urllib.error.URLError, OSError, RuntimeError, subprocess.CalledProcessError) as e:
         jobs.update(job_id, status="error", error=_friendly_error(f"{type(e).__name__}: {e}"))
 
 
@@ -431,6 +685,8 @@ def _run_download(job_id: str, url: str, format_id: Optional[str], audio_only: b
     url = normalize_url(url)
     if douyin.is_douyin_url(url):
         _run_douyin_download(job_id, url, format_id, audio_only)
+    elif bilibili.is_bilibili_url(url):
+        _run_bilibili_download(job_id, url, format_id, audio_only)
     else:
         _run_ytdlp_download(job_id, url, format_id, audio_only)
 

@@ -29,16 +29,29 @@ function fmtDuration(s) {
     : `${m}:${String(sec).padStart(2, '0')}`
 }
 
+function codecScore(f) {
+  const v = (f.vcodec || '').toLowerCase()
+  if (v.startsWith('avc') || v.includes('h264')) return 3
+  if (v.startsWith('hev') || v.startsWith('hvc')) return 2
+  if (v.startsWith('av01') || v.includes('av1')) return 1
+  return 0
+}
+
 // Filter to a friendly list:
 //  - All combined / video-only formats (we'll add bestaudio server-side)
 //  - One best audio-only as the "MP3 仅音频" choice
+// Prefer H.264 over HEVC/AV1 at the same resolution (QuickTime on macOS).
 const videoOptions = computed(() => {
   const list = (props.video.formats || []).filter((f) => !f.is_audio_only)
-  // Deduplicate by height + ext, keep highest tbr
   const seen = new Map()
   for (const f of list) {
     const key = `${f.height || 0}-${f.ext || ''}`
-    if (!seen.has(key) || (f.tbr || 0) > (seen.get(key).tbr || 0)) {
+    const prev = seen.get(key)
+    if (
+      !prev ||
+      codecScore(f) > codecScore(prev) ||
+      (codecScore(f) === codecScore(prev) && (f.tbr || 0) > (prev.tbr || 0))
+    ) {
       seen.set(key, f)
     }
   }
@@ -53,15 +66,9 @@ const audioOption = computed(() => {
   return list.reduce((best, f) => ((f.tbr || 0) > (best.tbr || 0) ? f : best), list[0])
 })
 
-// Free tier: anything up to 720p; 1080p and above is VIP.
-function isVip(f) {
-  return (f.height || 0) > 720
-}
+const maxHeight = computed(() => props.video.max_height || 0)
 
-const selectedId = ref(
-  // Pick the highest non-VIP video option by default, fall back to first.
-  (videoOptions.value.find((f) => !isVip(f)) || videoOptions.value[0])?.format_id || ''
-)
+const selectedId = ref(videoOptions.value[0]?.format_id || '')
 const downloadingAudio = ref(false)
 const downloading = ref(false)
 
@@ -83,10 +90,6 @@ function platformIconClass(extractor) {
 
 async function onDownloadSelected() {
   if (!selectedFmt.value) return
-  if (isVip(selectedFmt.value)) {
-    emit('open-vip', '解锁 1080p / 4K / 8K 高清下载')
-    return
-  }
   downloading.value = true
   try {
     const jobId = await startDownload({
@@ -107,6 +110,11 @@ async function onDownloadSelected() {
   }
 }
 
+const mergeReady = computed(() => props.video.ffmpeg_available !== false)
+const hasVideoOnlyStreams = computed(
+  () => videoOptions.value.length > 0 && videoOptions.value.every((f) => f.is_video_only)
+)
+
 async function onDownloadAudio() {
   if (!audioOption.value) return
   downloadingAudio.value = true
@@ -114,6 +122,7 @@ async function onDownloadAudio() {
     const jobId = await startDownload({
       url: props.video.webpage_url,
       format_id: audioOption.value.format_id,
+      audio_only: true,
     })
     emit('download', {
       jobId,
@@ -193,20 +202,35 @@ async function onDownloadAudio() {
                   {{ f.height ? f.height + 'p' : f.resolution || f.format_id }}
                   {{ f.ext ? '· ' + f.ext.toUpperCase() : '' }}
                   {{ f.filesize ? '· ' + fmtBytes(f.filesize) : '' }}
-                  {{ isVip(f) ? '   👑 VIP' : '' }}
+
                 </option>
               </select>
               <svg class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
             </div>
+            <p
+              v-if="hasVideoOnlyStreams && mergeReady"
+              class="mt-1.5 text-xs text-slate-400"
+            >
+              该站点为分轨画质，下载时将自动合并最佳音质。
+            </p>
           </div>
 
           <div
             v-else-if="audioOption"
-            class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"
+            class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
           >
-            <div class="font-semibold">该视频暂只能下载音频</div>
-            <div class="mt-1 text-slate-500 text-xs leading-relaxed">
-              当前视频源未提供已合并好的视频流。我们正在为高清合并通道升级，建议先用下方"仅下载音频"。
+            <div class="font-semibold">
+              {{ mergeReady ? '该视频暂只能下载音频' : '高清视频需服务端合并组件' }}
+            </div>
+            <div class="mt-1 text-amber-800/80 text-xs leading-relaxed">
+              <template v-if="!mergeReady">
+                B 站等平台将画面与声音分轨存储，需 ffmpeg 合并后才能下载完整 MP4。请在服务器执行
+                <code class="rounded bg-white/70 px-1">pip install -r requirements.txt</code>
+                （含 imageio-ffmpeg）或安装系统 ffmpeg 后重启后端。
+              </template>
+              <template v-else>
+                当前视频源未提供已合并好的单文件流，建议先用下方「仅下载音频」，或联系管理员检查合并服务。
+              </template>
             </div>
           </div>
 
@@ -242,8 +266,17 @@ async function onDownloadAudio() {
             </button>
           </div>
 
-          <p class="text-xs text-slate-400">
-            提示：1080p 及以上需开通 VIP；批量并发请升级 VIP 享 10 路同时下载。
+          <div
+            v-if="video.hd_hint"
+            class="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-900 leading-relaxed"
+          >
+            {{ video.hd_hint }}
+          </div>
+          <p v-else-if="maxHeight >= 720" class="text-xs text-slate-400">
+            已选择高清画质，下载时将自动合并音轨并优化 macOS 播放兼容性。
+          </p>
+          <p v-else class="text-xs text-slate-400">
+            已自动选择当前可用的最高画质（部分视频在游客权限下最高约 480p）。
           </p>
         </div>
       </div>

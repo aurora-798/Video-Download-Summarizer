@@ -1,11 +1,12 @@
 # VidGrabPro · 万能视频下载
 
-> 粘贴链接，一键下载。抖音**开箱即用**（无需登录、无需装 ffmpeg）；Bilibili / YouTube 等由 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 驱动。前端为明亮卡片风落地页 + VIP 转化占位。
+> 粘贴链接，一键下载。抖音 / B 站**开箱即用**（自研解析，无需 cookies）；YouTube 等其余站点由下载引擎驱动。前端为明亮卡片风落地页 + VIP 转化占位。
 
 ![tech](https://img.shields.io/badge/Backend-FastAPI-009688)
 ![tech](https://img.shields.io/badge/Frontend-Vue3-42b883)
 ![tech](https://img.shields.io/badge/Engine-yt--dlp-red)
 ![tech](https://img.shields.io/badge/Douyin-自研直采-000000)
+![tech](https://img.shields.io/badge/Bilibili-自研WBI-pink)
 
 ---
 
@@ -14,7 +15,8 @@
 | 能力 | 说明 |
 |------|------|
 | **抖音零配置** | 收藏夹弹窗链接、`/video/`、短链均可解析；无水印 mp4 直下 |
-| **1000+ 站点** | 非抖音平台走 yt-dlp，随上游更新 |
+| **B 站零配置** | BV/av 链接、短链 `b23.tv`；WBI 接口取流 + ffmpeg 合并，优先 H.264 |
+| **1000+ 站点** | 其余平台走通用引擎，随上游更新 |
 | **ffmpeg 随 pip 安装** | `imageio-ffmpeg` 提供静态二进制，**不必** `brew install ffmpeg` |
 | **用户无感** | 不要求导出 cookies、不要求手动装系统依赖 |
 
@@ -39,7 +41,8 @@ video_download_project/
 │       ├── ffmpeg_check.py
 │       ├── url_normalizer.py
 │       └── platforms/
-│           └── douyin.py    # 抖音 iesdouyin 直采
+│           ├── douyin.py    # 抖音 iesdouyin 直采
+│           └── bilibili.py  # B 站 WBI playurl 直采
 └── frontend/                # Vite + Vue3 + TailwindCSS
 ```
 
@@ -87,6 +90,8 @@ https://www.douyin.com/user/self?modal_id=7630823840629022577&showTab=favorite_c
 ```
 https://www.bilibili.com/video/BV1GJ411x7h7/
 ```
+
+**B 站**：与抖音相同，走自研解析（`platforms/bilibili.py` → WBI 接口 + 直链下载 + ffmpeg 合并），**无需**管理员配置 cookies 文件。
 
 > Vite 已将 `/api` 代理到 `127.0.0.1:8765`，开发时无 CORS 问题。
 

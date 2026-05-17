@@ -4,6 +4,29 @@
 
 ---
 
+## [0.1.3] - 2026-05-18
+
+### 新增
+
+- **B 站自研解析器** `backend/app/platforms/bilibili.py`：WBI 签名 + `playurl`（`try_look=1`）+ 分轨直拉；**无需** cookies 文件。
+- 支持 URL：`/video/BV…`、`/video/av…`、`b23.tv` 短链、多 P 参数 `?p=`。
+- **`mp4_compat.py`**：合并后 QuickTime 兼容（`+faststart`、HEVC `hvc1` 标签、AV1 转 H.264）；解析列表优先 H.264。
+- `ParseResponse` 增加 `max_height`、`hd_hint`（游客画质说明）。
+
+### 变更
+
+- `downloader.py`：B 站走 `_parse_bilibili` / `_run_bilibili_download`（urllib 双轨 + ffmpeg 合并），与抖音并列分流。
+- 前端 `VideoResultCard`：默认最高可用清晰度；移除 >720p 假 VIP 下载拦截；合并/画质提示优化。
+- `main.py`：启动时日志提示 ffmpeg 是否就绪。
+
+### 修复
+
+- B 站 BV 号 **大小写敏感**：不再 `.upper()` 整段 ID，修复接口返回「啥都木有」导致解析失败。
+- B 站合并 MP4 在 macOS QuickTime **仅有声无画**（AV1/HEVC 标签与编码兼容）。
+- `imageio-ffmpeg` 未安装时 B 站仅暴露音频轨的问题（文档与启动日志已强调依赖）。
+
+---
+
 ## [0.1.2] - 2026-05-18
 
 ### 新增

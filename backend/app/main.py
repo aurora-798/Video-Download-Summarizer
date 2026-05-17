@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
@@ -10,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .downloader import _friendly_error, cleanup_job, parse_video, start_download
-from .ffmpeg_check import ffmpeg_status
+from .ffmpeg_check import ffmpeg_available, ffmpeg_status
 from .jobs import jobs
 from .schemas import (
     DownloadRequest,
@@ -20,10 +22,26 @@ from .schemas import (
     ProgressResponse,
 )
 
+logger = logging.getLogger("uvicorn.error")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if ffmpeg_available():
+        logger.info("ffmpeg ready — video+audio merge enabled for DASH sites (e.g. Bilibili)")
+    else:
+        logger.warning(
+            "ffmpeg not found: Bilibili/YouTube may only expose audio in /api/parse. "
+            "Run: pip install -r requirements.txt  (includes imageio-ffmpeg)"
+        )
+    yield
+
+
 app = FastAPI(
     title="Universal Video Downloader",
     description="Thin FastAPI wrapper over yt-dlp.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

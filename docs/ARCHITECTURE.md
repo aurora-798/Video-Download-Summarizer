@@ -12,11 +12,11 @@
 │  localhost  │     POST /api/download   │                                   │
 │    :5173    │ ◄── GET /api/progress ── │  downloader.parse_video()         │
 └─────────────┘     GET  /api/file       │         │                │          │
-                                         │    抖音 URL?          其他 URL      │
-                                         │         │                │          │
-                                         │         ▼                ▼          │
-                                         │  platforms/douyin   yt-dlp 库 API   │
-                                         │  (iesdouyin SSR)   (+ ffmpeg 合并)  │
+                                         │  抖音?    B站?       其他 URL       │
+                                         │    │       │            │           │
+                                         │    ▼       ▼            ▼           │
+                                         │  douyin  bilibili    yt-dlp API     │
+                                         │  直链mp4  WBI+DASH   (+ ffmpeg)     │
                                          └──────────────────────────────────┘
 ```
 
@@ -25,7 +25,7 @@
 | 原则 | 说明 |
 |------|------|
 | 用户零配置 | 不要求安装 ffmpeg、不要求导出 cookies；`pip install -r requirements.txt` 即可 |
-| 平台分流 | 抖音走自研直采；其余平台继续用 yt-dlp，跟随上游升级 |
+| 平台分流 | 抖音 / B 站走自研直采；其余平台继续用 yt-dlp，跟随上游升级 |
 | 无状态 MVP | Job 存内存，文件下完即删，不接 DB / Redis |
 
 ---
@@ -44,6 +44,8 @@
 ```python
 if douyin.is_douyin_url(url):
     return _parse_douyin(url)
+if bilibili.is_bilibili_url(url):
+    return _parse_bilibili(url)
 return _parse_with_ytdlp(url)
 ```
 
@@ -84,9 +86,36 @@ item.video.play_addr.url_list[0]
 | 分享页 | `https://www.iesdouyin.com/share/video/{id}/` |
 | 短链 | `https://v.douyin.com/xxxxx/`（自动跟随 302） |
 
-### 2.3 通用分支（yt-dlp）
+### 2.3 B 站分支（零 cookies / 需 ffmpeg 合并）
 
-Bilibili、YouTube、TikTok 等由 yt-dlp 负责元数据与多格式列表。
+**为何自研？**
+
+- 不向用户索要 `cookies.txt`；与抖音一样「粘贴即用」。
+- 可控合并与 macOS QuickTime 兼容（见 `mp4_compat.py`）。
+
+**流程**（`backend/app/platforms/bilibili.py`）：
+
+```
+BV/av/b23.tv URL
+    │  extract_bvid()：保留 BV 大小写（仅规范前缀 BV）
+    ▼
+GET x/web-interface/view?bvid=…  →  cid、标题、封面
+    ▼
+WBI nav → 签名 → x/player/wbi/playurl（try_look=1, fnval=16|4048）
+    ▼
+DASH video[] + audio[]  →  按高度去重，优先 avc1(H.264)
+    ▼
+下载：urllib 拉 video.m4s + audio.m4s → ffmpeg copy 合并 → ensure_quicktime_compatible
+```
+
+**注意**
+
+- BV 号**大小写敏感**；`BV1abc` 与 `BV1ABC` 可能是不同稿件。
+- 游客权限下常见最高 **480p**；网页端更高画质多为登录/大会员流，接口不一定返回。
+
+### 2.4 通用分支（yt-dlp）
+
+YouTube、TikTok 等由 yt-dlp 负责元数据与多格式列表。
 
 **ffmpeg 用途**：许多站点将高清视频流与音频流分离（DASH），需合并为可播放 mp4。
 
@@ -109,8 +138,10 @@ backend/app/
 ├── schemas.py           # Pydantic 请求/响应模型
 ├── ffmpeg_check.py      # ffmpeg 路径探测（系统 + imageio-ffmpeg）
 ├── url_normalizer.py    # 非抖音专有的 URL 预处理（modal_id → /video/）
+├── mp4_compat.py        # 合并后 QuickTime 兼容、H.264 优选
 └── platforms/
-    └── douyin.py        # 抖音 iesdouyin 分享页解析 + 直链下载元数据
+    ├── douyin.py        # 抖音 iesdouyin 分享页解析
+    └── bilibili.py      # B 站 WBI playurl + DASH 解析
 ```
 
 | 前端组件 | 职责 |
@@ -144,7 +175,7 @@ backend/app/
 | 平台 | 解析引擎 | 需 ffmpeg | 需用户 cookies | 备注 |
 |------|----------|-----------|----------------|------|
 | **抖音** | `platforms/douyin` | 否 | 否 | 无水印 + 带水印两档；原画质单档 |
-| Bilibili | yt-dlp | 是（高清） | 否（公开视频） | 无 ffmpeg 时可能仅音频可下 |
+| **B 站** | `platforms/bilibili` | 是 | 否 | DASH 合并；游客常见 480p/360p |
 | YouTube 等 | yt-dlp | 是（高清） | 视地区/年龄限制 | 跟随 yt-dlp 上游 |
 | 小红书等 | yt-dlp | 视格式 | 部分需登录 | 未单独实现直采 |
 
@@ -167,13 +198,20 @@ cd frontend && npm install && npm run dev
 
 国内 pip 慢可加镜像：`-i https://pypi.tuna.tsinghua.edu.cn/simple`
 
-### 6.2 抖音解析失效时排查
+### 6.2 B 站解析失效时排查
+
+1. 确认链接中 **BV 号与浏览器地址栏完全一致**（勿改大小写）。
+2. `curl /api/health` 确认 `ffmpeg.available` 为 true。
+3. 若仅返回音频轨：检查是否安装 `imageio-ffmpeg`（`pip install -r requirements.txt`）。
+4. 接口「啥都木有」：多为 BV 错误或稿件已删除。
+
+### 6.3 抖音解析失效时排查
 
 1. 用移动端 UA 请求 `iesdouyin.com/share/video/{id}/`，确认 HTML 仍含 `_ROUTER_DATA`。
 2. 若改为纯 CSR / 空壳，需更新 `douyin.py` 中 JSON 路径或换入口。
 3. 若 CDN 直链 403，检查 `Referer: https://www.douyin.com/` 是否仍有效。
 
-### 6.3 新增「自研平台」的建议步骤
+### 6.4 新增「自研平台」的建议步骤
 
 1. 在 `backend/app/platforms/` 新增 `{platform}.py`，实现 `is_*_url(url)` + `fetch(url) -> (meta, formats)`。
 2. 在 `downloader.parse_video` / `_run_download` 增加路由分支。

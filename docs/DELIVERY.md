@@ -1,6 +1,6 @@
 # 交付报告 · VidGrabPro
 
-> **当前版本**：0.1.2（2026-05-18）  
+> **当前版本**：0.1.3（2026-05-18）  
 > **范围**：MVP — 解析 / 下载 / 队列 / VIP 前端付费墙  
 > **架构说明**：[`ARCHITECTURE.md`](ARCHITECTURE.md) · **变更记录**：[`CHANGELOG.md`](CHANGELOG.md)
 
@@ -16,6 +16,8 @@
 - [x] `GET /api/file/{job_id}` — 流式下发文件并清理临时目录
 - [x] `GET /api/health` — `{ ok, ffmpeg }` 状态
 - [x] **抖音自研解析** — `platforms/douyin.py`，无 cookies / 无 ffmpeg / 无水印选项
+- [x] **B 站自研解析** — `platforms/bilibili.py`，WBI + DASH 合并，无 cookies；BV 大小写校验
+- [x] **QuickTime 兼容** — `mp4_compat.py`，合并后 remux / H.264 优选
 - [x] **通用站点** — yt-dlp + `imageio-ffmpeg` 静态合并
 - [x] 错误中文化 — `_friendly_error`，不向终端用户索要安装步骤
 
@@ -64,8 +66,11 @@ cd frontend && npm run dev
 
 ### B. Bilibili
 
-- [ ] 粘贴 `https://www.bilibili.com/video/BV1GJ411x7h7/` → 解析成功
-- [ ] 选择 ≤720p 或 **仅下载音频** → 下载完成并可保存
+- [ ] 从浏览器**原样复制**链接，例如 `https://www.bilibili.com/video/BV1GJ411x7h7`（勿改 BV 大小写）
+- [ ] 解析成功：出现 480p / 360p 等选项（游客权限下常见最高 480p）
+- [ ] **立即下载视频** → 队列显示「合并处理中」→ 100% → 保存 mp4
+- [ ] 用 macOS **QuickTime** 打开：应有画面 + 声音（非仅音频）
+- [ ] **仅下载音频** → 得到 m4a/mp3
 
 ### C. UI / VIP
 
@@ -94,6 +99,8 @@ curl -s -X POST http://127.0.0.1:8765/api/parse \
 |------|------|------|
 | `GET /api/health` | ✅ | 0.1.0 |
 | Bilibili 解析 + 音频下载 | ✅ | 0.1.0 |
+| Bilibili 自研解析 + 480p 视频合并下载 | ✅ | 0.1.3 |
+| Bilibili BV 大小写 / QuickTime 播放 | ✅ | 0.1.3 |
 | 抖音 `modal_id` 收藏夹 URL 解析 | ✅ | 0.1.2 |
 | 抖音无水印 mp4 下载 (~12MB) | ✅ | 0.1.2 |
 | 前端解析 → 队列 → 保存 | ✅ | 0.1.0+ |
@@ -109,6 +116,7 @@ curl -s -X POST http://127.0.0.1:8765/api/parse \
 | 无数据库 | 重启丢任务 | SQLite + 用户表 |
 | VIP 未后端校验 | 前端硬编码 720p 锁 | JWT + 额度 API |
 | 无真支付 | 邮箱占座 | 微信/支付宝/Stripe |
+| B 站游客画质 | 接口常见最高 480p，非产品 bug | 大会员/登录流需后续扫码方案 |
 | 小红书等 | 仍走 yt-dlp，部分需登录 | 按需加 `platforms/` 直采 |
 | Job / 文件 | 内存 + 临时目录 | OSS + 下载历史 |
 
@@ -121,6 +129,8 @@ curl -s -X POST http://127.0.0.1:8765/api/parse \
 | [`backend/app/main.py`](../backend/app/main.py) | 路由入口 |
 | [`backend/app/downloader.py`](../backend/app/downloader.py) | 平台路由、yt-dlp / 抖音下载 |
 | [`backend/app/platforms/douyin.py`](../backend/app/platforms/douyin.py) | 抖音 iesdouyin 解析 |
+| [`backend/app/platforms/bilibili.py`](../backend/app/platforms/bilibili.py) | B 站 WBI + DASH |
+| [`backend/app/mp4_compat.py`](../backend/app/mp4_compat.py) | QuickTime / H.264 兼容 |
 | [`backend/app/ffmpeg_check.py`](../backend/app/ffmpeg_check.py) | ffmpeg 路径 |
 | [`backend/app/jobs.py`](../backend/app/jobs.py) | Job 状态机 |
 | [`frontend/src/components/HeroSection.vue`](../frontend/src/components/HeroSection.vue) | 粘贴与解析 |
@@ -163,6 +173,7 @@ curl -s -X POST http://127.0.0.1:8765/api/parse \
 
 | 版本 | 要点 |
 |------|------|
+| **0.1.3** | B 站自研 WBI 解析；`mp4_compat`；BV 大小写修复；QuickTime 可播 |
 | **0.1.2** | 抖音 iesdouyin 直采；`imageio-ffmpeg`；取消用户侧 ffmpeg/cookies 操作 |
 | **0.1.1** | URL 规范化、`ffmpeg_available`、错误中文化（cookies 方案已由 0.1.2 替代） |
 | **0.1.0** | MVP 首发，Bilibili 验收通过 |
